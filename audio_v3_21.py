@@ -353,7 +353,7 @@ class JingleDetector:
             # No jingles found, return entire file as one segment
             segments.append((0, total_duration))
 
-        return segmentsq
+        return segments
     def visualize_detections(self, audio_file_path: str, jingle_times: List[float]) -> None:
         """Create a visualization of the detected jingles."""
         try:
