@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Audio files (you probably don't want to commit large audio files)
+*.wav
+*.mp3
+*.m4a
+*.m4b
+*.flac
+*.aac
+
+# Output directories
+segments/
+lectures/
+*_segments/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Temporary files
+*.tmp
+*.temp
