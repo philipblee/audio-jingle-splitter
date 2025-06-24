@@ -327,35 +327,33 @@ class JingleDetector:
 
     def _calculate_segments(self, jingle_times: List[float], total_duration: float,
                             jingle_duration: float) -> List[Tuple[float, float]]:
+        """Calculate segment start and end times."""
         # Adjust jingle start times to account for template offset
         actual_jingle_starts = [max(0, t - self.template_offset) for t in jingle_times]
 
-        # Then use actual_jingle_starts instead of jingle_times for calculations
-
-        """Calculate segment start and end times."""
         segments = []
 
-        # First segment: from start to first jingle
-        if jingle_times:
-            if jingle_times[0] > 0:
-                segments.append((0, jingle_times[0]))
+        if actual_jingle_starts:
+            # First segment: from start to just before first jingle
+            if actual_jingle_starts[0] > 0:
+                segments.append((0, actual_jingle_starts[0]))
 
-            # Middle segments: between jingles
-            for i in range(len(jingle_times) - 1):
-                start = jingle_times[i] + jingle_duration
-                end = jingle_times[i + 1]
-                segments.append((start, end))
+            # Subsequent segments: each starts WITH its jingle
+            for i in range(len(actual_jingle_starts)):
+                segment_start = actual_jingle_starts[i]  # Start WITH the jingle
 
-            # Last segment: from last jingle to end
-            last_segment_start = jingle_times[-1] + jingle_duration
-            if last_segment_start < total_duration:
-                segments.append((last_segment_start, total_duration))
+                # End just before the next jingle (or at file end)
+                if i < len(actual_jingle_starts) - 1:
+                    segment_end = actual_jingle_starts[i + 1]
+                else:
+                    segment_end = total_duration
+
+                segments.append((segment_start, segment_end))
         else:
             # No jingles found, return entire file as one segment
             segments.append((0, total_duration))
 
-        return segments
-
+        return segmentsq
     def visualize_detections(self, audio_file_path: str, jingle_times: List[float]) -> None:
         """Create a visualization of the detected jingles."""
         try:
@@ -506,7 +504,7 @@ def main():
     # Configuration
     audio_file_path = "file2.m4b"  # Update this path if your file is elsewhere
     template_path = "jingle_template.wav"
-    output_directory = "lectures"
+    output_directory = ("testing 70 min v2")
     detection_threshold = 0.3
     min_segment_length = 1500  # 25 minutes
     start_number = 20  # Starting number for segments
