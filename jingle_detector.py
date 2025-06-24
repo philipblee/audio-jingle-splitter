@@ -205,9 +205,11 @@ class JingleDetector:
 
         # Try ffmpeg first (handles more formats and is more memory efficient)
         if self._has_ffmpeg():
-            self._split_with_ffmpeg(audio_file_path, jingle_times, output_dir, jingle_duration, start_number)
+            self._split_with_ffmpeg(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
+                                    max_duration)
         else:
-            self._split_with_librosa(audio_file_path, jingle_times, output_dir, jingle_duration, start_number)
+            self._split_with_librosa(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
+                                     max_duration)
 
     def _has_ffmpeg(self) -> bool:
         """Check if ffmpeg is available."""
@@ -234,34 +236,59 @@ class JingleDetector:
                 print(f"[{self._get_timestamp()}] Could not get duration with librosa: {e2}")
                 return 0
 
-    def _split_with_ffmpeg(self, audio_file_path: str, jingle_times: List[float],
-                           output_dir: str, jingle_duration: float, start_number: int) -> None:
-        """Split audio using ffmpeg (memory efficient for large files)."""
-        print(f"[{self._get_timestamp()}] Using ffmpeg for audio splitting...")
+    def split_audio_by_jingles(self, audio_file_path: str, jingle_times: List[float],
+                               output_dir: str = "segments", jingle_duration: float = 8.0,
+                               start_number: int = 1, max_duration: Optional[float] = None) -> None:
+        print(f"[{self._get_timestamp()}] DEBUG: split_audio_by_jingles received max_duration = {max_duration}")
 
-        total_duration = self._get_audio_duration(audio_file_path)
-        if total_duration == 0:
-            print(f"[{self._get_timestamp()}] Could not determine audio duration")
+        if not jingle_times:
+            print(f"[{self._get_timestamp()}] No jingles detected - cannot split audio")
             return
 
-        print(f"[{self._get_timestamp()}] Total duration: {total_duration / 60:.1f} minutes")
+        # Create output directory
+        Path(output_dir).mkdir(exist_ok=True)
+
+        # Try ffmpeg first (handles more formats and is more memory efficient)
+        if self._has_ffmpeg():
+            self._split_with_ffmpeg(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
+                                    max_duration)
+        else:
+            self._split_with_librosa(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
+                                     max_duration)
+
+    def _split_with_ffmpeg(self, audio_file_path: str, jingle_times: List[float],
+                           output_dir: str, jingle_duration: float, start_number: int,
+                           max_duration: Optional[float] = None) -> None:
+        """Split audio using ffmpeg (memory efficient for large files)."""
+        print(f"[{self._get_timestamp()}] DEBUG: max_duration parameter = {max_duration}")
+        print(f"[{self._get_timestamp()}] Using ffmpeg for audio splitting...")
+
+        # Use limited duration if specified, otherwise get full file duration
+        if max_duration:
+            total_duration = max_duration
+            print(f"[{self._get_timestamp()}] Using limited duration: {total_duration / 60:.1f} minutes")
+        else:
+            total_duration = self._get_audio_duration(audio_file_path)
+            if total_duration == 0:
+                print(f"[{self._get_timestamp()}] Could not determine audio duration")
+                return
+            print(f"[{self._get_timestamp()}] Total duration: {total_duration / 60:.1f} minutes")
 
         # Calculate segment boundaries
         segments = self._calculate_segments(jingle_times, total_duration, jingle_duration)
 
         # Extract segments
         base_name = Path(audio_file_path).stem
-        saved_count = 0
+        saved_segment_number = start_number  # NEW: Counter for saved segments only
 
         for i, (start_time, end_time) in enumerate(segments):
             duration = end_time - start_time
-            segment_number = start_number + i
 
             if duration < self.min_segment_length:
-                print(f"[{self._get_timestamp()}] Skipping segment {segment_number}: too short ({duration:.1f}s)")
-                continue
+                print(f"[{self._get_timestamp()}] Skipping segment: too short ({duration:.1f}s)")
+                continue  # Don't increment saved_segment_number
 
-            output_file = Path(output_dir) / f"{base_name}_segment_{segment_number:02d}.mp3"
+            output_file = Path(output_dir) / f"{base_name}_segment_{saved_segment_number:02d}.mp3"
 
             cmd = [
                 'ffmpeg', '-i', audio_file_path,
@@ -273,53 +300,73 @@ class JingleDetector:
 
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                saved_count += 1
-                print(f"[{self._get_timestamp()}] Saved segment {segment_number}: {start_time:.1f}s - {end_time:.1f}s "
-                      f"({duration:.1f}s) -> {output_file.name}")
+                print(
+                    f"[{self._get_timestamp()}] Saved segment {saved_segment_number}: {start_time:.1f}s - {end_time:.1f}s "
+                    f"({duration:.1f}s) -> {output_file.name}")
+                saved_segment_number += 1  # Only increment after successful save
             except subprocess.CalledProcessError as e:
-                print(f"[{self._get_timestamp()}] Failed to extract segment {segment_number}: {e.stderr}")
+                print(f"[{self._get_timestamp()}] Failed to extract segment {saved_segment_number}: {e.stderr}")
+                saved_segment_number += 1  # Still increment on failure to avoid duplicates
 
-        print(f"[{self._get_timestamp()}] Split complete: {saved_count} segments saved to '{output_dir}/'")
+        print(
+            f"[{self._get_timestamp()}] Split complete: {saved_segment_number - start_number} segments saved to '{output_dir}/'")
 
     def _split_with_librosa(self, audio_file_path: str, jingle_times: List[float],
-                            output_dir: str, jingle_duration: float, start_number: int) -> None:
+                            output_dir: str, jingle_duration: float, start_number: int,
+                            max_duration: Optional[float] = None) -> None:
+
         """Split audio using librosa (fallback method)."""
         print(f"[{self._get_timestamp()}] Using librosa for audio splitting...")
 
         try:
-            audio, sr = librosa.load(audio_file_path, sr=None)
+
+            # Load audio with optional duration limit
+            audio, sr = librosa.load(audio_file_path, sr=None, duration=max_duration)
+
+            # Use the actual loaded duration (respects max_duration)
             total_duration = len(audio) / sr
-            print(f"[{self._get_timestamp()}] Audio loaded: {total_duration / 60:.1f} minutes")
+
+            if max_duration and total_duration < max_duration:
+                print(
+                    f"[{self._get_timestamp()}] Audio loaded: {total_duration / 60:.1f} minutes (file shorter than limit)")
+            elif max_duration:
+                print(
+                    f"[{self._get_timestamp()}] Audio loaded: {total_duration / 60:.1f} minutes (limited from longer file)")
+            else:
+                print(f"[{self._get_timestamp()}] Audio loaded: {total_duration / 60:.1f} minutes (full file)")
 
             # Calculate segments
             segments = self._calculate_segments(jingle_times, total_duration, jingle_duration)
 
             # Extract and save segments
             base_name = Path(audio_file_path).stem
-            saved_count = 0
+            saved_segment_number = start_number  # NEW: Counter for saved segments only
 
             for i, (start_time, end_time) in enumerate(segments):
                 duration = end_time - start_time
-                segment_number = start_number + i
 
                 if duration < self.min_segment_length:
-                    print(f"[{self._get_timestamp()}] Skipping segment {segment_number}: too short ({duration:.1f}s)")
-                    continue
+                    print(f"[{self._get_timestamp()}] Skipping segment: too short ({duration:.1f}s)")
+                    continue  # Don't increment saved_segment_number
 
                 # Extract segment
                 start_sample = int(start_time * sr)
                 end_sample = int(end_time * sr)
                 segment = audio[start_sample:end_sample]
 
-                # Save as WAV
-                output_file = Path(output_dir) / f"{base_name}_segment_{segment_number:02d}.wav"
+                # Save as WAV using saved_segment_number
+                output_file = Path(output_dir) / f"{base_name}_segment_{saved_segment_number:02d}.wav"
                 sf.write(output_file, segment, sr)
-                saved_count += 1
 
-                print(f"[{self._get_timestamp()}] Saved segment {segment_number}: {start_time:.1f}s - {end_time:.1f}s "
-                      f"({duration:.1f}s) -> {output_file.name}")
+                print(
+                    f"[{self._get_timestamp()}] Saved segment {saved_segment_number}: {start_time:.1f}s - {end_time:.1f}s "
+                    f"({duration:.1f}s) -> {output_file.name}")
 
-            print(f"[{self._get_timestamp()}] Split complete: {saved_count} segments saved to '{output_dir}/'")
+                saved_segment_number += 1  # Only increment after successful save
+
+            print(
+                f"[{self._get_timestamp()}] Split complete: {saved_segment_number - start_number} segments saved to '{output_dir}/'")
+
             print(f"[{self._get_timestamp()}] Note: Files saved as WAV. Install ffmpeg for MP3 output.")
 
         except Exception as e:
@@ -474,7 +521,15 @@ def process_audio_file(audio_file_path: str, template_path: str,
 
             # Visualize and split
             detector.visualize_detections(audio_file_path, jingle_times)
-            detector.split_audio_by_jingles(audio_file_path, jingle_times, output_dir, start_number=start_number)
+
+            detector.split_audio_by_jingles(
+                audio_file_path,
+                jingle_times,
+                output_dir,
+                jingle_duration=8.0,
+                start_number=start_number,
+                max_duration=max_duration  # Add this
+            )
 
             final_timestamp = detector._get_timestamp()
             print(f"[{final_timestamp}] ✓ Processing complete! Segments saved to: {output_dir}/")
@@ -502,15 +557,15 @@ def main():
     print("=" * 80)
 
     # Configuration
-    audio_file_path = "file2.m4b"  # Update this path if your file is elsewhere
+    audio_file_path = "file1.m4b"  # Update this path if your file is elsewhere
     template_path = "jingle_template.wav"
-    output_directory = ("testing 70 min v2")
+    output_directory = ("testing 12 min file1")
     detection_threshold = 0.3
-    min_segment_length = 1500  # 25 minutes
-    start_number = 20  # Starting number for segments
+    min_segment_length = 300  # 5 minutes
+    start_number = 1  # Starting number for segments
 
     # TEST MODE: Process only first 70 minutes for faster testing
-    test_duration = 70 * 60  # 70 minutes in seconds
+    test_duration = 12 * 60  # 12 minutes in seconds
     # Set to None to process the entire file: test_duration = None
 
     # Check if files exist before processing
