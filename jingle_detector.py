@@ -185,16 +185,19 @@ class JingleDetector:
 
     def split_audio_by_jingles(self, audio_file_path: str, jingle_times: List[float],
                                output_dir: str = "segments", jingle_duration: float = 8.0,
-                               start_number: int = 1) -> None:
-        """
+                               start_number: int = 1, max_duration: Optional[float] = None,
+                               base_filename: Optional[str] = None) -> None:
+        """      
         Split the audio file into segments based on detected jingles.
-
+        
         Args:
             audio_file_path: Path to the source audio file
             jingle_times: List of jingle start times in seconds
             output_dir: Directory to save the split files
             jingle_duration: Duration of each jingle in seconds
             start_number: Starting number for the first segment (default: 1)
+            max_duration: Maximum duration processed in seconds (None = full file)
+            base_filename: Base name for output files (None = use audio filename)
         """
         if not jingle_times:
             print(f"[{self._get_timestamp()}] No jingles detected - cannot split audio")
@@ -205,11 +208,11 @@ class JingleDetector:
 
         # Try ffmpeg first (handles more formats and is more memory efficient)
         if self._has_ffmpeg():
-            self._split_with_ffmpeg(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
-                                    max_duration)
+            self._split_with_ffmpeg(
+                audio_file_path, jingle_times, output_dir, jingle_duration, start_number, max_duration, base_filename)
         else:
             self._split_with_librosa(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
-                                     max_duration)
+                                     max_duration, base_filename)
 
     def _has_ffmpeg(self) -> bool:
         """Check if ffmpeg is available."""
@@ -236,29 +239,11 @@ class JingleDetector:
                 print(f"[{self._get_timestamp()}] Could not get duration with librosa: {e2}")
                 return 0
 
-    def split_audio_by_jingles(self, audio_file_path: str, jingle_times: List[float],
-                               output_dir: str = "segments", jingle_duration: float = 8.0,
-                               start_number: int = 1, max_duration: Optional[float] = None) -> None:
-        print(f"[{self._get_timestamp()}] DEBUG: split_audio_by_jingles received max_duration = {max_duration}")
-
-        if not jingle_times:
-            print(f"[{self._get_timestamp()}] No jingles detected - cannot split audio")
-            return
-
-        # Create output directory
-        Path(output_dir).mkdir(exist_ok=True)
-
-        # Try ffmpeg first (handles more formats and is more memory efficient)
-        if self._has_ffmpeg():
-            self._split_with_ffmpeg(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
-                                    max_duration)
-        else:
-            self._split_with_librosa(audio_file_path, jingle_times, output_dir, jingle_duration, start_number,
-                                     max_duration)
-
     def _split_with_ffmpeg(self, audio_file_path: str, jingle_times: List[float],
                            output_dir: str, jingle_duration: float, start_number: int,
-                           max_duration: Optional[float] = None) -> None:
+                           max_duration: Optional[float] = None,
+                           base_filename: Optional[str] = None) -> None:
+
         """Split audio using ffmpeg (memory efficient for large files)."""
         print(f"[{self._get_timestamp()}] DEBUG: max_duration parameter = {max_duration}")
         print(f"[{self._get_timestamp()}] Using ffmpeg for audio splitting...")
@@ -277,8 +262,7 @@ class JingleDetector:
         # Calculate segment boundaries
         segments = self._calculate_segments(jingle_times, total_duration, jingle_duration)
 
-        # Extract segments
-        base_name = Path(audio_file_path).stem
+        base_name = Path(audio_file_path).stem  # Always use audio filename
         saved_segment_number = start_number  # NEW: Counter for saved segments only
 
         for i, (start_time, end_time) in enumerate(segments):
@@ -288,7 +272,8 @@ class JingleDetector:
                 print(f"[{self._get_timestamp()}] Skipping segment: too short ({duration:.1f}s)")
                 continue  # Don't increment saved_segment_number
 
-            output_file = Path(output_dir) / f"{base_name}_segment_{saved_segment_number:02d}.mp3"
+            segment_word = base_filename if base_filename else "segment"
+            output_file = Path(output_dir) / f"{base_name}_{segment_word}_{saved_segment_number:02d}.mp3"
 
             cmd = [
                 'ffmpeg', '-i', audio_file_path,
@@ -313,7 +298,8 @@ class JingleDetector:
 
     def _split_with_librosa(self, audio_file_path: str, jingle_times: List[float],
                             output_dir: str, jingle_duration: float, start_number: int,
-                            max_duration: Optional[float] = None) -> None:
+                            max_duration: Optional[float] = None,
+                            base_filename: Optional[str] = None) -> None:
 
         """Split audio using librosa (fallback method)."""
         print(f"[{self._get_timestamp()}] Using librosa for audio splitting...")
@@ -337,9 +323,7 @@ class JingleDetector:
 
             # Calculate segments
             segments = self._calculate_segments(jingle_times, total_duration, jingle_duration)
-
-            # Extract and save segments
-            base_name = Path(audio_file_path).stem
+            base_name = Path(audio_file_path).stem  # Always use audio filename
             saved_segment_number = start_number  # NEW: Counter for saved segments only
 
             for i, (start_time, end_time) in enumerate(segments):
@@ -355,7 +339,9 @@ class JingleDetector:
                 segment = audio[start_sample:end_sample]
 
                 # Save as WAV using saved_segment_number
-                output_file = Path(output_dir) / f"{base_name}_segment_{saved_segment_number:02d}.wav"
+                segment_word = base_filename if base_filename else "segment"
+                output_file = Path(output_dir) / f"{base_name}_{segment_word}_{saved_segment_number:02d}.wav"
+
                 sf.write(output_file, segment, sr)
 
                 print(
@@ -469,7 +455,8 @@ def process_audio_file(audio_file_path: str, template_path: str,
                        threshold: float = 0.5,
                        min_segment_length: int = 1500,
                        start_number: int = 1,
-                       max_duration: Optional[float] = None) -> bool:
+                       max_duration: Optional[float] = None,
+                       base_filename: Optional[str] = None) -> bool:  # Add this line
     """
     Process an audio file to detect and split by jingles.
 
@@ -499,6 +486,8 @@ def process_audio_file(audio_file_path: str, template_path: str,
     print(f"[{timestamp}] Output: {output_dir}")
     print(f"[{timestamp}] Threshold: {threshold}")
     print(f"[{timestamp}] Min segment: {min_segment_length}s")
+    print(f"[{timestamp}] Start number: {start_number}")
+    print(f"[{timestamp}] Base filename: {base_filename}")  # ADD THIS LINE
     print("=" * 80)
 
     try:
@@ -520,7 +509,7 @@ def process_audio_file(audio_file_path: str, template_path: str,
             print(f"[{detector._get_timestamp()}] Jingle times: {[f'{t:.1f}s' for t in jingle_times]}")
 
             # Visualize and split
-            detector.visualize_detections(audio_file_path, jingle_times)
+            # detector.visualize_detections(audio_file_path, jingle_times)
 
             detector.split_audio_by_jingles(
                 audio_file_path,
@@ -528,8 +517,8 @@ def process_audio_file(audio_file_path: str, template_path: str,
                 output_dir,
                 jingle_duration=8.0,
                 start_number=start_number,
-                max_duration=max_duration  # Add this
-            )
+                max_duration=max_duration,
+                base_filename=base_filename)
 
             final_timestamp = detector._get_timestamp()
             print(f"[{final_timestamp}] ✓ Processing complete! Segments saved to: {output_dir}/")
@@ -557,16 +546,14 @@ def main():
     print("=" * 80)
 
     # Configuration
-    audio_file_path = "file1.m4b"  # Update this path if your file is elsewhere
-    template_path = "jingle_template.wav"
-    output_directory = ("testing 12 min file1")
-    detection_threshold = 0.3
-    min_segment_length = 300  # 5 minutes
-    start_number = 1  # Starting number for segments
-
-    # TEST MODE: Process only first 70 minutes for faster testing
-    test_duration = 12 * 60  # 12 minutes in seconds
-    # Set to None to process the entire file: test_duration = None
+    audio_file_path = "file1.m4b"
+    template_path = "jingle_template.wav" # reference jingle
+    output_directory = "test_12min"
+    base_filename = "lecture"  # NEW: Configure the segment naming
+    detection_threshold = 0.7
+    min_segment_length = 300  # 5 minutes, or skip file as too small
+    start_number = 1
+    test_duration = 12 * 60  # 70 minutes in seconds, Set to None to process the entire file: test_duration = None
 
     # Check if files exist before processing
     if not os.path.exists(audio_file_path):
@@ -579,7 +566,6 @@ def main():
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Please check the template path and try again.")
         return
 
-    # Process the audio file
     success = process_audio_file(
         audio_file_path=audio_file_path,
         template_path=template_path,
@@ -587,7 +573,8 @@ def main():
         threshold=detection_threshold,
         min_segment_length=min_segment_length,
         start_number=start_number,
-        max_duration=test_duration  # Added duration limit
+        max_duration=test_duration,
+        base_filename=base_filename  # Pass the configuration variable
     )
 
     end_time = datetime.now()
